@@ -1,52 +1,81 @@
-import json
+import asyncio
+import os
 import uuid
 
-from aiohttp import web
+from aiogram.filters import Command
+from aiogram.fsm.context import FSMContext
+from aiogram.fsm.state import StatesGroup, State
+from aiogram import Bot, Dispatcher, types, Router, F
+
+TOKEN = '5884510329:AAFckFdz49eKVwP1QK7YAlpuBBGO6EvQnYY'  # Потрібно вказати свій токен бота
+
+# Створення об'єкту бота та диспетчера
+router = Router()
+bot = Bot(token=TOKEN)
+dp = Dispatcher()
+dp.include_routers(router)
+
+# Створення з'єднання з базою даних
+engine = create_engine(conn_str)
+Session = sessionmaker(bind=engine)
+session = Session()
+
+# Клас для збереження посилань
+Base = declarative_base()
 
 
-async def show_form(request):
-    with open('form.html', 'r') as f:
-        html = f.read()
-    return web.Response(text=html, content_type='text/html')
+class Link(Base):
+    __tablename__ = 'links'
+
+    id = Column(Integer, primary_key=True)
+    user_id = Column(BigInteger)
+    original_link = Column(String)
+    short_link = Column(String)
+class FormStates(StatesGroup):
+    WAITING_FOR_LINK = State()
+
+# Клас для керування станами
 
 
-async def create_link(request):
-    data = await request.post()
-    original_link = data.get('link')
-    link_id = str(uuid.uuid4())[:6]
-    links = read_links_from_file('links.json')
-    links[link_id] = original_link
-    write_links_to_file('links.json', links)
-    return web.json_response({'id': link_id})
+# Обробник команди /start
+@router.message(Command("start"))
+
+async def start(message: types.Message, state: FSMContext):
+    await state.set_state(FormStates.WAITING_FOR_LINK)
+    await message.reply("Відправте посилання, яке потрібно скоротити.")
 
 
-async def get_link(request):
-    link_id = request.match_info.get('id')
-    links = read_links_from_file('links.json')
-    original_link = links.get(link_id)
-    if original_link:
-        return web.HTTPFound(original_link)
+# Обробник отримання посилання
+@router.message(FormStates.WAITING_FOR_LINK, F.text)
+async def process_link(message: types.Message, state: FSMContext):
+    original_link = message.text
+    if original_link.startswith('http'):
+        if session.query(Link).filter_by(user_id=message.from_user.id, original_link=original_link).all():
+            await message.reply(f"Ви вже додавали такий лінк!")
+            return
+        short_link = str(uuid.uuid4())[:6]
+        link = Link(original_link=original_link, short_link=short_link, user_id = message.from_user.id)
+        session.add(link)
+        session.commit()
+        await state.clear()
+        await message.reply(f"Посилання було скорочено. Його ID: {link.id}")
+    await message.reply(f"Невірний формат посилання. Посилання повинно починатися з http:// або https://")
+
+
+# Обробник команди /get_my_links
+@router.message(Command('get_my_links'))
+async def get_my_links(message: types.Message):
+    user_id = message.from_user.id
+    user_links = session.query(Link).filter_by(user_id=user_id).all()
+    if user_links:
+        response = "Ваші скорочені посилання:\n"
+        for link in user_links:
+            response += f"ID: {link.id}, Посилання: {link.original_link}\n"
     else:
-        return web.json_response({'error': 'Link not found'}, status=404)
+        response = "Ви ще не додали жодного посилання."
+    await message.reply(response)
 
 
-def read_links_from_file(file_path):
-    with open(file_path, 'r') as f:
-        links = json.load(f)
-    return links.get('links', {})
-
-
-def write_links_to_file(file_path, links):
-    with open(file_path, 'w') as f:
-        json.dump({'links': links}, f)
-
-
-app = web.Application()
-app.add_routes([
-    web.get('/', show_form),
-    web.post('/', create_link),
-    web.get('/{id}', get_link),
-])
-
+# Запуск бота
 if __name__ == '__main__':
-    web.run_app(app)
+    asyncio.run(dp.start_polling(bot))

@@ -1,0 +1,40 @@
+version: '3'
+services:
+  web:
+    build: .
+    ports:
+      - 8080:8080
+    depends_on:
+      - database
+    environment:
+      - TOKEN=5884510329:AAFckFdz49eKVwP1QK7YAlpuBBGO6EvQnYY
+      - DB_HOST=postgresql://user:password@database/db
+#  bot:
+#    build:
+#      context: .
+#      dockerfile: Dockerfile
+#    volumes:
+#      - .:/app
+#    environment:
+#      - TOKEN=5884510329:AAFckFdz49eKVwP1QK7YAlpuBBGO6EvQnYY
+#      - DB_HOST=postgresql://user:password@database/db
+#    depends_on:
+#      - database
+  database:
+    image: postgres:13
+    restart: always
+    ports:
+      - 5432:5432
+    environment:
+      - POSTGRES_USER=user
+      - POSTGRES_PASSWORD=password
+      - POSTGRES_DB=db
+  pgadmin:
+    image: dpage/pgadmin4
+    ports:
+      - 80:80
+    environment:
+      PGADMIN_DEFAULT_EMAIL: admin@example.com
+      PGADMIN_DEFAULT_PASSWORD: 123
+    depends_on:
+      - database
